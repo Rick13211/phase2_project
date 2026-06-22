@@ -30,7 +30,7 @@ postRouter.post('/',async(req,res)=>{
             return res.status(404).json({message:'User not found'})
         }
         const result = await client.query(
-            `INSTERT INTO posts (user_id,content, title) VALUES ($1,$2,$3) RETURNING *`,
+            `INSERT INTO posts (user_id,content, title) VALUES ($1,$2,$3) RETURNING *`,
             [user_id,content,title]
         )
         await client.query(`COMMIT`)
