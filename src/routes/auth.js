@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
+import redis from '../redis.js';
 
 const authRouter = Router();
 
@@ -45,13 +46,8 @@ authRouter.post('/signup', async (req, res) => {
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN }
     );
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    await pool.query(
-      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, refreshToken, expiresAt]
-    );
+    const refreshTokenKey = `refresh:${user.id}:${refreshToken}`
+    await redis.setex(refreshTokenKey, 7*24*60*60, user.id.toString())
 
     res.status(201).json({ user, accessToken, refreshToken });
 
@@ -70,6 +66,7 @@ authRouter.post('/login', async (req, res) => {
   }
 
   try {
+  //first we search for user
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1', [email]
     );
@@ -79,12 +76,13 @@ authRouter.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+    //then we match the password
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
-
+    //create accesstoken and refreshtoken
     const accessToken = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -97,15 +95,12 @@ authRouter.post('/login', async (req, res) => {
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN }
     );
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    await pool.query(
-      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, refreshToken, expiresAt]
-    );
+    //store the refreshtoken in redis
+    const refreshTokenKey = `refresh:${user.id}:${refreshToken}`
+    await redis.setex(refreshTokenKey, 7*24*60*60, user.id.toString())
 
     const { password: _, ...userWithoutPassword } = user;
+    //return the tokens and user
     res.json({ user: userWithoutPassword, accessToken, refreshToken });
 
   } catch (error) {
@@ -114,8 +109,8 @@ authRouter.post('/login', async (req, res) => {
   }
 });
 
-// ---- REFRESH ----
 authRouter.post('/refresh', async (req, res) => {
+  //first we fetch the refresh token
   const { refreshToken } = req.body;
 
   if (!refreshToken) {
@@ -123,28 +118,26 @@ authRouter.post('/refresh', async (req, res) => {
   }
 
   try {
-    const stored = await pool.query(
-      'SELECT * FROM refresh_tokens WHERE token = $1 AND expires_at > NOW()',
-      [refreshToken]
-    );
-
-    if (stored.rows.length === 0) {
-      return res.status(403).json({ message: 'Invalid or expired refresh token' });
-    }
-
+    //then we decode the refreshtoken
     const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
 
+    //then we check if the refreshtoken is valid and not expired
+    const stored = await redis.get(`refresh:${decoded.userId}:${refreshToken}`);
+    if (!stored) {
+      return res.status(403).json({ message: 'Invalid or expired refresh token' });
+    }
+    //fetch the user
     const user = await pool.query(
       'SELECT id, email, role FROM users WHERE id = $1',
       [decoded.userId]
     );
-
+    //create a new access token
     const accessToken = jwt.sign(
       { userId: user.rows[0].id, email: user.rows[0].email, role: user.rows[0].role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
-
+    //send it
     res.json({ accessToken });
 
   } catch (error) {
@@ -161,13 +154,10 @@ authRouter.post('/logout', async (req, res) => {
     return res.status(400).json({ message: 'Refresh token required' });
   }
 
-  try {
-    await pool.query(
-      'DELETE FROM refresh_tokens WHERE token = $1',
-      [refreshToken]
-    );
+  try { 
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+    await redis.del(`refresh:${decoded.userId}:${refreshToken}`);
     res.json({ message: 'Logged out successfully' });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

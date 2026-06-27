@@ -3,9 +3,9 @@ import { config } from 'dotenv';
 import userRouter from './src/routes/users.js';
 import postRouter from './src/routes/posts.js';
 import authRouter from './src/routes/auth.js';
-import { authLimiter,generalLimiter } from './src/middlewares/rateLimit.js';
 import helmet from 'helmet';
 import cors from 'cors';
+import { redisRateLimit } from './src/middlewares/redisRateLimit.js';
 config();
 
 const app = express();
@@ -19,9 +19,17 @@ app.use(
 )
 app.use(helmet())
 app.use(express.json());
-app.use(generalLimiter)
+app.use(redisRateLimit({
+  windowSecs:15*60,
+  maxRequests:10,
+  keyPrefix:'ratelimit:general'
+}))
 
-app.use('/auth', authLimiter,authRouter);
+app.use('/auth', redisRateLimit({
+  windowSecs:60,
+  maxRequests:5,
+  keyPrefix:'ratelimit:auth'
+}),authRouter);
 app.use('/users', userRouter);
 app.use('/posts', postRouter);
 

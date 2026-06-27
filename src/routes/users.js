@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authorize,authenticate } from '../middlewares/auth.js';
+import redis from '../redis.js';
 
 const userRouter = Router();
 
@@ -8,8 +9,16 @@ const userRouter = Router();
 
 // AUTHENTICATED — any logged in user
 userRouter.get('/', authenticate, async (req, res) => {
+  const cacheKey = 'users:all'
   try {
+    const cached = await redis.get(cacheKey);
+    if (cached){
+      console.log('Cache HIT');
+      return res.json(JSON.parse(cached));
+    }
+    console.log('Cache MISS');
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY id ASC');
+    await redis.setex(cacheKey, 60, JSON.stringify(result.rows));
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -21,13 +30,20 @@ userRouter.get('/', authenticate, async (req, res) => {
 // ADMIN — can get anyone's profile
 userRouter.get('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
+  const cachedKey = `users:${id}`;
 
-  // If not admin, can only access own profile
+
   if (req.user.role !== 'admin' && req.user.userId !== Number(id)) {
     return res.status(403).json({ message: 'Access denied' });
   }
 
   try {
+    const cached = await redis.get(cachedKey);
+    if(cached){
+      console.log(`Cache hit for user ${id}`);
+      return res.json(JSON.parse(cached));
+    }
+    console.log(`Cache miss for user ${id}`);
     const result = await pool.query(
       `SELECT users.id, users.name, users.email, users.role,
               COUNT(posts.id) AS post_count
@@ -40,6 +56,7 @@ userRouter.get('/:id', authenticate, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
+    await redis.setex(cachedKey, 60, JSON.stringify(result.rows[0]));
     res.json(result.rows[0]);
   } catch (error) {
     console.error(error);
@@ -64,6 +81,9 @@ userRouter.patch('/:id', authenticate, async (req, res) => {
        RETURNING id, name, email, bio, role`,
       [name, bio, id]
     );
+    await redis.del(`users:${id}`)
+    await redis.del(`users:all`);
+    console.log(`Cache deleted for user ${id}`);
     res.json(result.rows[0]);
   } catch (error) {
     console.error(error);

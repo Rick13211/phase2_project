@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { authenticate, authorize } from '../middleware/auth.js';
-
+import { authenticate, authorize } from '../middlewares/auth.js';
 const postRouter = Router();
 
 // PUBLIC — anyone can read posts

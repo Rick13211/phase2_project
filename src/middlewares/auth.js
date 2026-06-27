@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 
-export default function authenticate(req,res,next){
+export function authenticate(req,res,next){
+    //frontend send the access token in this format 
+    //Authorization: Bearer <token>
     const authHeader = req.headers['authorization']
     const token = authHeader && authHeader.split(' ')[1]
     if (!token){
@@ -9,8 +11,10 @@ export default function authenticate(req,res,next){
         })
     }
     try{
+        //verify the token for user
         const decoded = jwt.verify(token,process.env.JWT_SECRET)
         req.user = decoded
+        //pass on to next middleware
         next();
     }
     catch(error){
