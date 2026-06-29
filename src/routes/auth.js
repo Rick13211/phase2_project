@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import redis from '../redis.js';
+import { queueWelcomeEmail } from '../queues/emailQueue.js';
 
 const authRouter = Router();
 
@@ -33,6 +34,9 @@ authRouter.post('/signup', async (req, res) => {
     );
 
     const user = result.rows[0];
+
+    //add the user to queue
+    queueWelcomeEmail(user)
 
     const accessToken = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },

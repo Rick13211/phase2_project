@@ -9,7 +9,7 @@ export function redisRateLimit({windowSecs,maxRequests, keyPrefix})
         const windowStart = now-windowSecs*1000
 
         try{
-            await redis.zremrangeByScore(key,0,windowStart)
+            await redis.zremrangebyscore(key,0,windowStart)
             const count = await redis.zcard(key);
             if (count>=maxRequests){
                 return res.status(429).json

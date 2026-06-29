@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { authenticate, authorize } from '../middlewares/auth.js';
+import { queueFailingJob, queueNotification } from '../queues/notificationQueue.js';
 const postRouter = Router();
 
 // PUBLIC — anyone can read posts
@@ -38,8 +39,10 @@ postRouter.post('/', authenticate, async (req, res) => {
       'INSERT INTO posts (user_id, title, content) VALUES ($1, $2, $3) RETURNING *',
       [user_id, title, content]
     );
-
+    
     await client.query('COMMIT');
+    //queue the notification
+    queueNotification(result.rows[0]);
     res.status(201).json(result.rows[0]);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -75,5 +78,11 @@ postRouter.delete('/:id', authenticate, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+postRouter.get('/test-fail', async (req,res)=>{
+  await queueFailingJob()
+  res.json({message:'Failing job queued'})
+})
+
 
 export default postRouter;
